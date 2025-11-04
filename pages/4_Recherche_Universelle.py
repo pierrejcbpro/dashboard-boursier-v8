@@ -1,247 +1,224 @@
 # -*- coding: utf-8 -*-
 """
-v7.6 — Recherche universelle IA enrichie
-Basée sur ta v7.0 :
-- Structure et ergonomie inchangées
-- Ajout MA120 / MA240, Score IA et Tendance LT 🌱 / 🌧 / ⚖️
-- Cohérence avec les profils IA et lib v7.6
+v7.8 — Mon Portefeuille IA stricte avec signal de vente 💰
+---------------------------------------------------------
+- Reprend intégralement la structure de ta version 7.6
+- Ajoute une colonne "Signal Vente 💰" (IA + Objectif + Stop)
+- Affiche une alerte automatique en haut de page quand des ventes / stops sont détectés
 """
 
-import streamlit as st, pandas as pd, numpy as np, altair as alt, requests, html, re, os, json
-from datetime import datetime
+import os, json, numpy as np, pandas as pd, altair as alt, streamlit as st
 from lib import (
     fetch_prices, compute_metrics, price_levels_from_row, decision_label_from_row,
-    company_name_from_ticker, get_profile_params, resolve_identifier,
-    find_ticker_by_name, maybe_guess_yahoo, load_profile
+    style_variations, company_name_from_ticker, get_profile_params, load_profile,
+    resolve_identifier, find_ticker_by_name, load_mapping, save_mapping, maybe_guess_yahoo
 )
 
-# ---------------- CONFIG ----------------
-st.set_page_config(page_title="Recherche universelle", page_icon="🔍", layout="wide")
-st.title("🔍 Recherche universelle — Analyse IA complète (LT inclus)")
+# --- CONFIG -------------------------------------------------------------------
+st.set_page_config(page_title="Mon Portefeuille", page_icon="💼", layout="wide")
+st.title("💼 Mon Portefeuille — IA stricte avec signal de vente 💰")
 
+# --- PARAMÈTRES UTILISATEUR ---------------------------------------------------
+periode = st.sidebar.radio("Période (graphique)", ["1 jour", "7 jours", "30 jours"], index=0)
+days_map = {"1 jour": 2, "7 jours": 10, "30 jours": 35}
+days_hist = days_map[periode]
+
+benchmark_label = st.sidebar.selectbox(
+    "Indice de référence (benchmark)",
+    ["CAC 40", "DAX", "S&P 500", "NASDAQ 100"],
+    index=0
+)
+benchmark_tickers = {"CAC 40": "^FCHI", "DAX": "^GDAXI", "S&P 500": "^GSPC", "NASDAQ 100": "^NDX"}
+benchmark_symbol = benchmark_tickers[benchmark_label]
+
+# --- CHARGEMENT DU PORTEFEUILLE -----------------------------------------------
 DATA_PATH = "data/portfolio.json"
 os.makedirs("data", exist_ok=True)
+
 if not os.path.exists(DATA_PATH):
     pd.DataFrame(columns=["Ticker", "Type", "Qty", "PRU", "Name"]).to_json(
         DATA_PATH, orient="records", indent=2, force_ascii=False
     )
 
-# ---------------- HELPERS ----------------
-def remember_last_search(symbol=None, query=None, period=None):
-    if symbol is not None:
-        st.session_state["ru_symbol"] = symbol
-    if query is not None:
-        st.session_state["ru_query"] = query
-    if period is not None:
-        st.session_state["ru_period"] = period
+try:
+    pf = pd.read_json(DATA_PATH)
+except Exception:
+    pf = pd.DataFrame(columns=["Ticker", "Type", "Qty", "PRU", "Name"])
 
-def get_last_search(default_period="30 jours"):
-    return (
-        st.session_state.get("ru_symbol", ""),
-        st.session_state.get("ru_query", ""),
-        st.session_state.get("ru_period", default_period),
+# Normalisation
+for c, default in [("Ticker", ""), ("Type", "PEA"), ("Qty", 0.0), ("PRU", 0.0), ("Name", "")]:
+    if c not in pf.columns:
+        pf[c] = default
+
+# --- GESTION FICHIERS ---------------------------------------------------------
+cols = st.columns(4)
+with cols[0]:
+    if st.button("💾 Sauvegarder"):
+        pf.to_json(DATA_PATH, orient="records", indent=2, force_ascii=False)
+        st.success("✅ Sauvegardé.")
+with cols[1]:
+    if st.button("🗑 Réinitialiser"):
+        try: os.remove(DATA_PATH)
+        except FileNotFoundError: pass
+        pd.DataFrame(columns=["Ticker","Type","Qty","PRU","Name"]).to_json(DATA_PATH, orient="records", indent=2)
+        st.success("♻️ Réinitialisé."); st.rerun()
+with cols[2]:
+    st.download_button(
+        "⬇️ Exporter JSON",
+        json.dumps(pf.to_dict(orient="records"), ensure_ascii=False, indent=2),
+        file_name="portfolio.json", mime="application/json"
     )
-
-def google_news_titles_and_links(q, lang="fr", limit=6):
-    url = f"https://news.google.com/rss/search?q={requests.utils.quote(q)}&hl={lang}-{lang.upper()}&gl={lang.upper()}&ceid={lang.upper()}:{lang.upper()}"
-    try:
-        xml = requests.get(url, timeout=10).text
-        items = re.findall(r"<item>(.*?)</item>", xml, flags=re.S)
-        out = []
-        for it in items:
-            tt = re.search(r"<title><!\[CDATA\[(.*?)\]\]></title>|<title>(.*?)</title>", it, flags=re.S)
-            lk = re.search(r"<link>(.*?)</link>", it, flags=re.S)
-            dt = re.search(r"<pubDate>(.*?)</pubDate>", it)
-            t = html.unescape((tt.group(1) or tt.group(2) or "").strip()) if tt else ""
-            l = (lk.group(1).strip() if lk else "")
-            d = ""
-            if dt:
-                try:
-                    d = datetime.strptime(dt.group(1).strip(), "%a, %d %b %Y %H:%M:%S %Z").strftime("%d/%m/%Y")
-                except Exception:
-                    d = dt.group(1).strip()
-            if t and l:
-                out.append((t, l, d))
-            if len(out) >= limit:
-                break
-        return out
-    except Exception:
-        return []
-
-def short_news_summary(titles):
-    pos_kw = ["résultats", "bénéfice", "guidance", "relève", "contrat", "approbation", "dividende", "rachat", "upgrade", "partenariat", "record"]
-    neg_kw = ["profit warning", "avertissement", "enquête", "retard", "rappel", "amende", "downgrade", "abaisse", "procès", "licenciement", "chute"]
-    if not titles:
-        return "Pas d’actualité saillante — mouvement possiblement technique."
-    s = 0
-    for t, _, _ in titles:
-        low = t.lower()
-        if any(k in low for k in pos_kw): s += 1
-        if any(k in low for k in neg_kw): s -= 1
-    if s >= 1:
-        return "Hausse soutenue par des nouvelles positives."
-    elif s <= -1:
-        return "Pression liée à des nouvelles défavorables."
-    else:
-        return "Actualité neutre ou technique."
-
-def pretty_pct(x):
-    return f"{x*100:+.2f}%" if pd.notna(x) else "—"
-
-# ---------------- RECHERCHE ----------------
-last_symbol, last_query, last_period = get_last_search()
-
-with st.expander("🔎 Recherche d’une valeur", expanded=True):
-    c1, c2, c3 = st.columns([2, 1, 1])
-    with c1:
-        query = st.text_input("Nom / Ticker LS / ISIN / WKN / Yahoo", value=last_query)
-    with c2:
-        period = st.selectbox("Période du graphique", ["Jour", "7 jours", "30 jours", "1 an", "5 ans"],
-                              index=["Jour","7 jours","30 jours","1 an","5 ans"].index(last_period))
-    with c3:
-        if st.button("🔍 Lancer la recherche", use_container_width=True):
-            if not query.strip():
-                st.warning("Entre un terme de recherche.")
-            else:
-                sym, src = resolve_identifier(query)
-                if not sym:
-                    results = find_ticker_by_name(query) or []
-                    if results:
-                        sym = results[0]["symbol"]
-                if not sym:
-                    sym = maybe_guess_yahoo(query) or query.strip().upper()
-                remember_last_search(symbol=sym, query=query, period=period)
-                st.rerun()
-
-symbol = st.session_state.get("ru_symbol", "")
-if not symbol:
-    st.info("🔍 Entre un nom ou ticker ci-dessus pour lancer l’analyse IA complète.")
-    st.stop()
-
-# ---------------- DONNÉES ----------------
-days_map = {"Jour": 5, "7 jours": 10, "30 jours": 40, "1 an": 400, "5 ans": 1300}
-days_graph = days_map[period]
-hist_graph = fetch_prices([symbol], days=days_graph)
-hist_full = fetch_prices([symbol], days=240)
-metrics = compute_metrics(hist_full)
-
-if metrics.empty:
-    st.warning("Impossible de calculer les indicateurs sur cette valeur.")
-    st.stop()
-
-row = metrics.iloc[0]
-name = company_name_from_ticker(symbol)
-
-# ---------------- ANALYSE ----------------
-col1, col2, col3, col4 = st.columns([1.6, 1, 1, 1])
-with col1:
-    st.markdown(f"## {name}  \n`{symbol}`")
-    st.caption("Analyse IA étendue (MA20/MA50/MA120/MA240, ATR14).")
-with col2:
-    st.metric("Cours", f"{row['Close']:.2f}")
-with col3:
-    st.metric("MA20 / MA50", f"{row['MA20']:.2f} / {row['MA50']:.2f}")
-with col4:
-    st.metric("ATR14", f"{row['ATR14']:.2f}")
-
-v1d, v7d, v30 = row.get("pct_1d", np.nan), row.get("pct_7d", np.nan), row.get("pct_30d", np.nan)
-st.markdown(f"**Variations** — 1j: {pretty_pct(v1d)} · 7j: {pretty_pct(v7d)} · 30j: {pretty_pct(v30)}")
-
-st.divider()
-
-# 👇 Profil IA cohérent
-profil = load_profile()
-levels = price_levels_from_row(row, profil)
-entry, target, stop = levels["entry"], levels["target"], levels["stop"]
-decision = decision_label_from_row(row, held=False, vol_max=get_profile_params(profil)["vol_max"])
-
-# 🔸 Tendance long terme 🌱 / 🌧 / ⚖️
-ma120, ma240 = row.get("MA120", np.nan), row.get("MA240", np.nan)
-trend_lt = 1 if ma120 > ma240 else (-1 if ma120 < ma240 else 0)
-lt_icon = "🌱" if trend_lt > 0 else ("🌧" if trend_lt < 0 else "⚖️")
-
-# 🔸 Score IA combiné
-ma20, ma50 = row.get("MA20", np.nan), row.get("MA50", np.nan)
-score_ia = np.nan
-if np.isfinite(ma20) and np.isfinite(ma50) and np.isfinite(ma120) and np.isfinite(ma240):
-    gap_st = abs(ma20 - ma50)
-    gap_lt = abs(ma120 - ma240)
-    score_ia = 100 - min((gap_st + gap_lt) * 10, 100)
-
-cA, cB = st.columns([1.2, 2])
-
-with cA:
-    st.subheader("🧠 Synthèse IA")
-    vol = (abs(ma20 - ma50) / ma50 * 100) if np.isfinite(ma20) and np.isfinite(ma50) and ma50 != 0 else np.nan
-    st.markdown(
-        f"- **Décision IA** : {decision}\n"
-        f"- **Entrée** ≈ **{entry:.2f}** · **Objectif** ≈ **{target:.2f}** · **Stop** ≈ **{stop:.2f}**\n"
-        f"- **Volatilité** : {'faible' if vol < 2 else 'modérée' if vol < 5 else 'élevée'} ({vol:.2f}%)\n"
-        f"- **Tendance LT** : {lt_icon}\n"
-        f"- **Score IA global** : {score_ia:.1f}/100"
-    )
-
-    prox = ((row["Close"] / entry) - 1) * 100 if entry and entry > 0 else np.nan
-    if np.isfinite(prox):
-        emoji = "🟢" if abs(prox) <= 2 else ("⚠️" if abs(prox) <= 5 else "🔴")
-        st.markdown(f"- **Proximité entrée** : {prox:+.2f}% {emoji}")
-    else:
-        st.caption("Proximité non calculable.")
-
-    st.divider()
-    st.markdown("### ➕ Ajouter au portefeuille")
-    type_port = st.selectbox("Type de compte", ["PEA", "CTO"])
-    qty = st.number_input("Quantité", min_value=0.0, step=1.0)
-    pru = st.number_input("PRU estimé (€)", min_value=0.0, step=0.01, value=float(row["Close"]))
-    if st.button("💼 Ajouter"):
+with cols[3]:
+    up = st.file_uploader("📥 Importer JSON", type=["json"], label_visibility="collapsed")
+    if up:
         try:
-            pf = pd.read_json(DATA_PATH)
-            pf = pd.concat([pf, pd.DataFrame([{
-                "Ticker": symbol.upper(),
-                "Type": type_port,
-                "Qty": qty,
-                "PRU": pru,
-                "Name": name
-            }])], ignore_index=True)
-            pf.to_json(DATA_PATH, orient="records", indent=2, force_ascii=False)
-            st.success(f"✅ {name} ({symbol}) ajouté au portefeuille {type_port}.")
+            imp = pd.DataFrame(json.load(up))
+            for c in ["Ticker","Type","Qty","PRU","Name"]:
+                if c not in imp.columns:
+                    imp[c] = "" if c in ("Ticker","Type","Name") else 0.0
+            imp.to_json(DATA_PATH, orient="records", indent=2, force_ascii=False)
+            st.success("✅ Importé."); st.rerun()
         except Exception as e:
             st.error(f"Erreur : {e}")
 
-with cB:
-    st.subheader(f"📈 Graphique — {period}")
-    if hist_graph.empty or "Date" not in hist_graph.columns:
-        st.caption("Pas assez d'historique.")
-    else:
-        d = hist_graph[hist_graph["Ticker"] == symbol].copy().sort_values("Date")
-        base = alt.Chart(d).mark_line(color="#3B82F6").encode(
-            x=alt.X("Date:T", title=""),
-            y=alt.Y("Close:Q", title="Cours"),
-            tooltip=["Date:T", alt.Tooltip("Close:Q", format=".2f")]
-        ).properties(height=380)
-        lv = pd.DataFrame({"y":[entry, target, stop],
-                           "label":["Entrée ~","Objectif ~","Stop ~"]})
-        rules = alt.Chart(lv).mark_rule(strokeDash=[6,4]).encode(
-            y="y:Q", color=alt.value("#888"), tooltip=["label:N","y:Q"]
-        )
-        st.altair_chart(base + rules, use_container_width=True)
+st.divider()
+
+# --- RECHERCHE ET AJOUT -------------------------------------------------------
+with st.expander("🔎 Recherche par nom / ISIN / WKN / Ticker"):
+    q = st.text_input("Nom ou identifiant", "")
+    t = st.selectbox("Type", ["PEA", "CTO"])
+    qty = st.number_input("Qté", min_value=0.0, step=1.0)
+    if st.button("Rechercher"):
+        if not q.strip():
+            st.warning("Entre un terme.")
+        else:
+            sym, _ = resolve_identifier(q)
+            if sym:
+                st.session_state["search_res"] = [{"symbol": sym, "shortname": company_name_from_ticker(sym)}]
+            else:
+                st.session_state["search_res"] = find_ticker_by_name(q) or []
+    res = st.session_state.get("search_res", [])
+    if res:
+        labels = [f"{r['symbol']} — {r.get('shortname','')}" for r in res]
+        sel = st.selectbox("Résultats", labels)
+        if st.button("➕ Ajouter"):
+            i = labels.index(sel)
+            sym = res[i]["symbol"]
+            nm = res[i].get("shortname", sym)
+            pf = pd.concat([pf, pd.DataFrame([{"Ticker": sym.upper(), "Type": t, "Qty": qty, "PRU": 0.0, "Name": nm}])], ignore_index=True)
+            pf.to_json(DATA_PATH, orient="records", indent=2, force_ascii=False)
+            st.success(f"Ajouté : {nm} ({sym})"); st.rerun()
 
 st.divider()
 
-# ---------------- ACTUALITÉS ----------------
-st.subheader("📰 Actualités récentes ciblées")
-news = google_news_titles_and_links(f"{name} {symbol}", lang="fr", limit=6)
-if not news:
-    news = google_news_titles_and_links(name, lang="fr", limit=6)
+# --- TABLEAU D'ÉDITION --------------------------------------------------------
+st.subheader("📝 Mon Portefeuille IA")
 
-if news:
-    st.markdown("**Résumé IA**")
-    st.info(short_news_summary(news))
-    for title, link, date in news:
-        date_txt = f" *(publié le {date})*" if date else ""
-        st.markdown(f"- [{title}]({link}){date_txt}")
-else:
-    st.caption("Aucune actualité disponible.")
+edited = st.data_editor(
+    pf, num_rows="dynamic", use_container_width=True, hide_index=True,
+    column_config={
+        "Ticker": st.column_config.TextColumn("Ticker"),
+        "Type": st.column_config.SelectboxColumn("Type", options=["PEA","CTO"]),
+        "Qty": st.column_config.NumberColumn("Qté", format="%.2f"),
+        "PRU": st.column_config.NumberColumn("PRU (€)", format="%.2f"),
+        "Name": st.column_config.TextColumn("Nom"),
+    }
+)
 
-# ---------------- MÉMO ----------------
-remember_last_search(symbol=symbol, query=query if 'query' in locals() else last_query, period=period)
+if edited.empty:
+    st.info("Ajoute une action pour commencer."); st.stop()
+
+# --- ANALYSE IA ---------------------------------------------------------------
+tickers = edited["Ticker"].dropna().unique().tolist()
+hist_full = fetch_prices(tickers, days=240)
+met = compute_metrics(hist_full)
+merged = edited.merge(met, on="Ticker", how="left")
+
+profil = load_profile()
+volmax = get_profile_params(profil)["vol_max"]
+
+rows = []
+for _, r in merged.iterrows():
+    px = float(r.get("Close", np.nan))
+    qty = float(r.get("Qty", 0))
+    pru = float(r.get("PRU", np.nan))
+    name = r.get("Name") or company_name_from_ticker(r.get("Ticker"))
+    levels = price_levels_from_row(r, profil)
+    val = px * qty if np.isfinite(px) else np.nan
+    gain_eur = (px - pru) * qty if np.isfinite(px) and np.isfinite(pru) else np.nan
+    perf = ((px / pru) - 1) * 100 if (np.isfinite(px) and np.isfinite(pru) and pru > 0) else np.nan
+    dec = decision_label_from_row(r, held=True, vol_max=volmax)
+
+    # Volatilité
+    ma20, ma50 = float(r.get("MA20", np.nan)), float(r.get("MA50", np.nan))
+    vola = abs(ma20 - ma50) / ma50 * 100 if np.isfinite(ma20) and np.isfinite(ma50) and ma50 != 0 else np.nan
+    vol_ind = "🟢" if vola < 2 else ("🟡" if vola < 5 else "🔴")
+
+    # Tendance LT
+    ma120, ma240 = float(r.get("MA120", np.nan)), float(r.get("MA240", np.nan))
+    trend_icon = "🌱" if ma120 > ma240 else ("🌧" if ma120 < ma240 else "⚖️")
+
+    # Score IA combiné
+    score_ia = 100 - min((abs(ma20 - ma50) + abs(ma120 - ma240)) * 10, 100)
+
+    rows.append({
+        "Type": r["Type"], "Nom": name, "Ticker": r["Ticker"],
+        "Cours (€)": round(px, 2) if np.isfinite(px) else None,
+        "Qté": qty, "PRU (€)": round(pru, 2) if np.isfinite(pru) else None,
+        "Valeur (€)": round(val, 2) if np.isfinite(val) else None,
+        "Gain/Perte (€)": round(gain_eur, 2) if np.isfinite(gain_eur) else None,
+        "Perf%": round(perf, 2) if np.isfinite(perf) else None,
+        "Volatilité": vol_ind, "Tendance LT": trend_icon,
+        "Score IA": round(score_ia, 1),
+        "Entrée (€)": levels["entry"], "Objectif (€)": levels["target"], "Stop (€)": levels["stop"],
+        "Décision IA": dec
+    })
+
+out = pd.DataFrame(rows)
+
+# --- SIGNAL DE VENTE 💰 -------------------------------------------------------
+def signal_vente(row):
+    dec = str(row.get("Décision IA", ""))
+    perf = row.get("Perf%", 0)
+    px = row.get("Cours (€)", np.nan)
+    tgt = row.get("Objectif (€)", np.nan)
+    stp = row.get("Stop (€)", np.nan)
+
+    if "Vendre" in dec or (np.isfinite(tgt) and px >= tgt):
+        return "💰 Prendre bénéfice"
+    elif "Surveiller" in dec or (perf > 0 and perf < 5):
+        return "👁️ Surveiller"
+    elif "Acheter" in dec:
+        return "🟢 Opportunité / Renforcer"
+    elif np.isfinite(stp) and px <= stp:
+        return "❌ Stop conseillé"
+    return "—"
+
+out["Signal Vente 💰"] = out.apply(signal_vente, axis=1)
+
+# --- ALERTE AUTOMATIQUE -------------------------------------------------------
+vente_rows = out[out["Signal Vente 💰"].isin(["💰 Prendre bénéfice", "❌ Stop conseillé"])]
+if not vente_rows.empty:
+    st.warning(f"⚠️ {len(vente_rows)} signal(s) détecté(s) : **{', '.join(vente_rows['Nom'].head(5))}**")
+
+# --- STYLES -------------------------------------------------------------------
+def style_signal(val):
+    if "💰" in val: return "background-color:#e8f5e9; color:#0b8043; font-weight:600;"
+    if "👁️" in val: return "background-color:#fff8e1; color:#a67c00;"
+    if "❌" in val: return "background-color:#ffebee; color:#b71c1c;"
+    if "🟢" in val: return "background-color:#e3f2fd; color:#01579b;"
+    return ""
+
+st.dataframe(
+    out.style
+        .applymap(style_signal, subset=["Signal Vente 💰"])
+        .applymap(style_variations, subset=["Perf%"]),
+    use_container_width=True, hide_index=True
+)
+
+# --- SYNTHÈSE ---------------------------------------------------------------
+st.markdown(f"### 📊 Synthèse {periode}")
+tot_gain = out["Gain/Perte (€)"].sum()
+tot_val = out["Valeur (€)"].sum()
+pct = (tot_gain / (tot_val - tot_gain) * 100) if tot_val > 0 else 0
+st.markdown(f"**Gain total : {tot_gain:+.2f} € ({pct:+.2f}%)** — Score IA moyen : {out['Score IA'].mean():.1f}/100")
