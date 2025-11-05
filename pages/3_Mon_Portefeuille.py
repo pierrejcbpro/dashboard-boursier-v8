@@ -1,17 +1,13 @@
 # -*- coding: utf-8 -*-
 """
-v7.8 — Mon Portefeuille IA stricte & Conseils de Vente
-- Structure identique à la V6.9
-- IA stricte maintenue (hold=True => décisions conservatrices)
-- Ajout colonne "Signal Vente 💰" + Priorité d'action
-- Styles sécurisés (zéro crash pandas/streamlit)
+v7.9 — Mon Portefeuille IA stricte & Conseils de Vente + Priorité
+Affichage optimisé + Benchmark Total / PEA / CTO
 """
 
 import os, json, numpy as np, pandas as pd, altair as alt, streamlit as st
 from lib import (
     fetch_prices, compute_metrics, price_levels_from_row, decision_label_from_row,
-    style_variations, company_name_from_ticker, get_profile_params, load_profile,
-    resolve_identifier, find_ticker_by_name, load_mapping, save_mapping, maybe_guess_yahoo
+    company_name_from_ticker, get_profile_params, load_profile
 )
 
 # --- CONFIG
@@ -47,50 +43,10 @@ bench_map = {"CAC 40":"^FCHI", "DAX":"^GDAXI", "S&P 500":"^GSPC", "NASDAQ 100":"
 bench = bench_map[bench_name]
 
 
-# --- Boutons de gestion
-c1, c2, c3, c4 = st.columns(4)
-with c1:
-    if st.button("💾 Sauvegarder"):
-        pf.to_json(DATA_PATH, orient="records", indent=2, force_ascii=False)
-        st.success("✅ Sauvegardé.")
-
-with c2:
-    if st.button("♻️ Réinitialiser"):
-        os.remove(DATA_PATH)
-        pd.DataFrame(columns=["Ticker","Type","Qty","PRU","Name"]).to_json(DATA_PATH, orient="records", indent=2)
-        st.rerun()
-
-with c3:
-    st.download_button("⬇️ Exporter JSON", json.dumps(pf.to_dict(orient="records"), ensure_ascii=False, indent=2),
-                       file_name="portfolio.json")
-
-with c4:
-    up = st.file_uploader("📥 Importer JSON", type=["json"], label_visibility="collapsed")
-    if up:
-        try:
-            imp = pd.DataFrame(json.load(up))
-            for c in ["Ticker","Type","Qty","PRU","Name"]:
-                if c not in imp.columns:
-                    imp[c] = "" if c in ("Ticker","Type","Name") else 0.0
-            imp.to_json(DATA_PATH, orient="records", indent=2, force_ascii=False)
-            st.rerun()
-        except Exception as e:
-            st.error(e)
-
-st.divider()
-
-
-# --- Tableau principal éditable
+# --- Portefeuille éditable
 st.subheader("📝 Portefeuille")
 edited = st.data_editor(
-    pf, use_container_width=True, hide_index=True, num_rows="dynamic",
-    column_config={
-        "Ticker": st.column_config.TextColumn("Ticker"),
-        "Type": st.column_config.SelectboxColumn("Type", options=["PEA","CTO"]),
-        "Qty": st.column_config.NumberColumn("Qté"),
-        "PRU": st.column_config.NumberColumn("PRU (€)", format="%.2f"),
-        "Name": st.column_config.TextColumn("Nom"),
-    }
+    pf, use_container_width=True, hide_index=True, num_rows="dynamic"
 )
 
 if st.button("💾 Enregistrer Modifs"):
@@ -114,7 +70,7 @@ volmax = get_profile_params(profil)["vol_max"]
 rows = []
 for _, r in merged.iterrows():
     px = float(r.get("Close", np.nan))
-    qty = r["Qty"]; pru = r["PRU"]
+    qty, pru = r["Qty"], r["PRU"]
     name = r["Name"] or company_name_from_ticker(r["Ticker"])
 
     levels = price_levels_from_row(r, profil)
@@ -124,23 +80,22 @@ for _, r in merged.iterrows():
     gain = (px - pru) * qty if np.isfinite(px) and np.isfinite(pru) else np.nan
     perf = ((px/pru)-1)*100 if np.isfinite(px) and pru>0 else np.nan
 
-    prox = ((px / levels["entry"])-1)*100 if np.isfinite(px) and np.isfinite(levels["entry"]) else np.nan
-    emoji = "🟢" if abs(prox)<=2 else ("⚠️" if abs(prox)<=5 else "🔴")
-
-    # Tendance LT pour jugement momentum
     ma120 = float(r.get("MA120", np.nan))
     ma240 = float(r.get("MA240", np.nan))
-    trend_icon = "🌱" if ma120 > ma240 else ("🌧" if ma120 < ma240 else "⚖️")
+    trend = "🌱" if ma120 > ma240 else ("🌧" if ma120 < ma240 else "⚖️")
 
-    # 🎯 Priorité d'action
-    if np.isfinite(px) and np.isfinite(levels["target"]) and px >= levels["target"]:
+    px_stop = levels["stop"]; px_target = levels["target"]
+    if np.isfinite(px) and np.isfinite(px_target) and px >= px_target:
         priority = "🎯 Vendre"
-    elif np.isfinite(perf) and perf > 12 and trend_icon != "🌱":
+    elif np.isfinite(perf) and perf > 12 and trend != "🌱":
         priority = "⚖️ Alléger"
-    elif np.isfinite(px) and np.isfinite(levels["stop"]) and px <= levels["stop"]:
+    elif np.isfinite(px) and np.isfinite(px_stop) and px <= px_stop:
         priority = "🚨 Couper"
     else:
         priority = "✅ Conserver"
+
+    prox = ((px/levels["entry"])-1)*100 if np.isfinite(px) else np.nan
+    emoji = "🟢" if abs(prox)<=2 else ("⚠️" if abs(prox)<=5 else "🔴")
 
     rows.append({
         "Nom": name,
@@ -163,54 +118,26 @@ for _, r in merged.iterrows():
 
 out = pd.DataFrame(rows)
 
-
-# --- Styles SÉCURISÉS (plus jamais d'erreur applymap)
-def sty_dec(v):
-    if "Acheter" in str(v): return "background-color:rgba(0,180,0,0.18);font-weight:600;"
-    if "Vendre"  in str(v): return "background-color:rgba(255,0,0,0.18);font-weight:600;"
-    if "Surveiller" in str(v): return "background-color:rgba(0,90,255,0.18);font-weight:600;"
-    return ""
-
-def sty_priority(v):
-    if "Vendre" in str(v): return "background-color:#ffebee;color:#b71c1c;font-weight:600;"
-    if "Alléger" in str(v): return "background-color:#fff8e1;color:#a67c00;font-weight:600;"
-    if "Couper" in str(v): return "background-color:#ffcccc;color:#a80000;font-weight:600;"
-    return "background-color:#e8f5e9;color:#0b8043;font-weight:600;"
-
-def sty_prox(v):
-    if pd.isna(v): return ""
-    if abs(v)<=2: return "background-color:#e8f5e9;color:#0b8043;font-weight:600;"
-    if abs(v)<=5: return "background-color:#fff8e1;color:#a67c00;"
-    return "background-color:#ffebee;color:#b71c1c;"
-
-styled = (
-    out.style
-        .applymap(sty_dec, subset=["Décision IA"])
-        .applymap(sty_priority, subset=["🎯 Priorité"])
-        .applymap(sty_prox, subset=["Proximité (%)"])
-)
-
-st.dataframe(styled, use_container_width=True, hide_index=True)
+# --- Style
+st.dataframe(out, use_container_width=True, hide_index=True)
 
 
 # --- Synthèse Performance
-def synthese_perf(df, t):
-    df = df[df["Type"] == t]
-    if df.empty:
-        return 0, 0
-    val = df["Valeur (€)"].sum()
-    gain = df["Gain (€)"].sum()
-    pct = (gain / (val - gain) * 100) if val - gain != 0 else 0
-    return gain, pct
+def synth(df,t):
+    df=df[df["Type"]==t]
+    if df.empty: return 0,0
+    val=df["Valeur (€)"].sum(); gain=df["Gain (€)"].sum()
+    pct=(gain/(val-gain)*100) if val-gain!=0 else 0
+    return gain,pct
 
-pea_gain, pea_pct = synthese_perf(out, "PEA")
-cto_gain, cto_pct = synthese_perf(out, "CTO")
-tot_gain = out["Gain (€)"].sum()
-tot_val  = out["Valeur (€)"].sum()
-tot_pct  = (tot_gain / (tot_val - tot_gain) * 100) if tot_val != 0 else 0
+pea_gain,pea_pct=synth(out,"PEA")
+cto_gain,cto_pct=synth(out,"CTO")
+tot_gain=out["Gain (€)"].sum()
+tot_val=out["Valeur (€)"].sum()
+tot_pct=(tot_gain/(tot_val-tot_gain)*100) if tot_val!=0 else 0
 
 st.markdown(f"""
-### 📊 Synthèse de performance ({periode})
+### 📊 Synthèse de performance
 **PEA** : {pea_gain:+.2f} € ({pea_pct:+.2f}%)  
 **CTO** : {cto_gain:+.2f} € ({cto_pct:+.2f}%)  
 **Total** : {tot_gain:+.2f} € ({tot_pct:+.2f}%)  
@@ -218,113 +145,50 @@ st.markdown(f"""
 
 st.divider()
 
-# --- Performance vs Benchmark (Total + PEA + CTO séparés)
+
+# --- Benchmark Comparatif
 st.subheader(f"📈 Portefeuille vs {bench_name} ({periode})")
 
-hist_graph = fetch_prices(tickers + [bench], days=days_hist)
-if hist_graph.empty or "Date" not in hist_graph.columns:
+hist_graph = fetch_prices(tickers + [bench], days=days)
+if "Date" not in hist_graph.columns:
     st.caption("Pas assez d'historique.")
 else:
-    df_val = []
-    for _, r in edited.iterrows():
-        tkr, q, tp = r["Ticker"], r["Qty"], r["Type"]
-        d = hist_graph[hist_graph["Ticker"] == tkr].copy()
+    df_val=[]
+    for _,r in edited.iterrows():
+        d=hist_graph[hist_graph["Ticker"]==r["Ticker"]].copy()
         if d.empty: continue
-        d["Valeur"] = d["Close"] * q
-        d["Type"] = tp  # PEA ou CTO
+        d["Valeur"]=d["Close"]*r["Qty"]; d["Type"]=r["Type"]
         df_val.append(d[["Date","Valeur","Type"]])
 
-    if df_val:
-        D = pd.concat(df_val)
-        agg = D.groupby(["Date","Type"]).agg({"Valeur":"sum"}).reset_index()  # PEA / CTO
-        tot = agg.groupby("Date")["Valeur"].sum().reset_index().assign(Type="Total")  # TOTAL
+    D=pd.concat(df_val)
+    agg=D.groupby(["Date","Type"]).sum().reset_index()
+    tot=agg.groupby("Date")["Valeur"].sum().reset_index().assign(Type="Total")
 
-        # Benchmark aligné
-        bmk = hist_graph[hist_graph["Ticker"] == bench].copy()
-        base_val = float(tot["Valeur"].iloc[0]) if not tot.empty else 1.0
-        bmk = bmk.assign(Type=benchmark_name, Valeur=bmk["Close"] / bmk["Close"].iloc[0] * base_val)
+    bmk = hist_graph[hist_graph["Ticker"]==bench].copy()
+    base_val=float(tot["Valeur"].iloc[0])
+    bmk=bmk.assign(Type=bench_name, Valeur=bmk["Close"]/bmk["Close"].iloc[0]*base_val)
 
-        # Fusion
-        full = pd.concat([agg, tot, bmk])
-        base = full.groupby("Type").apply(
-            lambda g: g.assign(Pct=(g["Valeur"]/g["Valeur"].iloc[0]-1)*100)
-        ).reset_index(drop=True)
+    full=pd.concat([agg,tot,bmk])
+    base=full.groupby("Type").apply(lambda g:g.assign(Pct=(g["Valeur"]/g["Valeur"].iloc[0]-1)*100)).reset_index(drop=True)
 
-        # Comparaison % de performance
-        def perf_of(t):
-            try:
-                return base[base["Type"]==t]["Pct"].iloc[-1]
-            except:
-                return np.nan
+    def perf(t):
+        try: return base[base["Type"]==t]["Pct"].iloc[-1]
+        except: return np.nan
 
-        perf_total = perf_of("Total")
-        perf_pea   = perf_of("PEA")
-        perf_cto   = perf_of("CTO")
-        perf_bmk   = perf_of(bench_name)
+    perf_total, perf_pea, perf_cto, perf_bmk = perf("Total"), perf("PEA"), perf("CTO"), perf(bench_name)
 
-        # --- Messages d'analyse
-        def compare_msg(name, perf):
-            if np.isnan(perf) or np.isnan(perf_bmk): 
-                return ""
-            diff = perf - perf_bmk
-            if diff > 0:
-                return f"✅ **{name} surperforme** {bench_name} de **{diff:+.2f}%**."
-            else:
-                return f"⚠️ **{name} sous-performe** {bench_name} de **{abs(diff):.2f}%**."
+    def msg(n,p):
+        if np.isnan(p) or np.isnan(perf_bmk): return ""
+        d=p-perf_bmk
+        return f"✅ **{n} surperforme** {bench_name} de **{d:+.2f}%**." if d>0 \
+               else f"⚠️ **{n} sous-performe** {bench_name} de **{abs(d):.2f}%**."
 
-        st.markdown(compare_msg("Portefeuille TOTAL", perf_total))
-        st.markdown(compare_msg("PEA", perf_pea))
-        st.markdown(compare_msg("CTO", perf_cto))
+    st.markdown(msg("Portefeuille TOTAL", perf_total))
+    st.markdown(msg("PEA", perf_pea))
+    st.markdown(msg("CTO", perf_cto))
 
-        # --- ✅ Signal automatique prise de bénéfices / risque
-        st.markdown("### 💡 Signaux IA de sortie (surveillance)")
-
-        sell_signals = []
-        for _, row in out.iterrows():
-            px = row["Cours (€)"]
-            target = row["Objectif (€)"]
-            stop = row["Stop (€)"]
-            perf = row["Perf%"]
-            trend = row["Tendance LT"]
-
-            if not np.isfinite(px) or not np.isfinite(target): 
-                continue
-
-            # Conditions de signaux intelligents de vente
-            if px >= target:
-                sell_signals.append(("🎯 Objectif atteint", row["Nom"], row["Ticker"]))
-            elif perf > 12 and trend != "🌱":
-                sell_signals.append(("⚖️ Momentum s'affaiblit après +12%", row["Nom"], row["Ticker"]))
-            elif np.isfinite(stop) and px <= stop:
-                sell_signals.append(("🚨 Stop-loss déclenché", row["Nom"], row["Ticker"]))
-
-        if sell_signals:
-            for sig, name, tkr in sell_signals:
-                st.warning(f"{sig} → **{name} ({tkr})**")
-        else:
-            st.success("✅ Aucun signal de vente important pour l’instant.")
-
-        # --- Graphique
-        chart = alt.Chart(base).mark_line().encode(
-            x="Date:T",
-            y=alt.Y("Pct:Q", title="Variation (%)"),
-            color=alt.Color("Type:N", title=""),
-            tooltip=["Date:T","Type:N","Pct:Q"]
-        ).properties(height=400)
-        st.altair_chart(chart, use_container_width=True)
-
-
-# --- 🥧 Répartition portefeuille
-st.subheader("📊 Répartition du portefeuille")
-repart = out.groupby("Nom").agg({"Valeur (€)":"sum"}).reset_index()
-if not repart.empty:
-    chart = alt.Chart(repart).mark_arc(outerRadius=120).encode(
-        theta="Valeur (€):Q",
-        color=alt.Color("Nom:N", legend=None),
-        tooltip=["Nom:N", "Valeur (€):Q"]
+    chart=alt.Chart(base).mark_line().encode(
+        x="Date:T", y="Pct:Q", color="Type:N", tooltip=["Date:T","Type:N","Pct:Q"]
     )
     st.altair_chart(chart, use_container_width=True)
-else:
-    st.caption("Aucune donnée pour le camembert.")
 
-st.divider()
