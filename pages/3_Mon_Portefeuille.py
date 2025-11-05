@@ -204,55 +204,101 @@ st.markdown(f"""
 
 st.divider()
 
-# --- Performance vs Benchmark
-st.subheader(f"📈 Portefeuille vs {bench_name} ({periode})")
+# --- Performance vs Benchmark (Total + PEA + CTO séparés)
+st.subheader(f"📈 Portefeuille vs {benchmark_label} ({periode})")
 
-hist_graph = fetch_prices(tickers + [bench], days=days)
+hist_graph = fetch_prices(tickers + [benchmark_symbol], days=days_hist)
 if hist_graph.empty or "Date" not in hist_graph.columns:
     st.caption("Pas assez d'historique.")
 else:
     df_val = []
     for _, r in edited.iterrows():
-        tkr, qt, _, tp = r["Ticker"], r["Qty"], r["PRU"], r["Type"]
+        tkr, q, tp = r["Ticker"], r["Qty"], r["Type"]
         d = hist_graph[hist_graph["Ticker"] == tkr].copy()
         if d.empty: continue
-        d["Valeur"] = d["Close"] * qt
-        d["Type"] = tp
+        d["Valeur"] = d["Close"] * q
+        d["Type"] = tp  # PEA ou CTO
         df_val.append(d[["Date","Valeur","Type"]])
 
     if df_val:
         D = pd.concat(df_val)
-        agg = D.groupby(["Date","Type"]).agg({"Valeur":"sum"}).reset_index()
-        tot = agg.groupby("Date")["Valeur"].sum().reset_index().assign(Type="Total")
+        agg = D.groupby(["Date","Type"]).agg({"Valeur":"sum"}).reset_index()  # PEA / CTO
+        tot = agg.groupby("Date")["Valeur"].sum().reset_index().assign(Type="Total")  # TOTAL
 
-        bmk = hist_graph[hist_graph["Ticker"] == bench].copy()
+        # Benchmark aligné
+        bmk = hist_graph[hist_graph["Ticker"] == benchmark_symbol].copy()
         base_val = float(tot["Valeur"].iloc[0]) if not tot.empty else 1.0
-        bmk = bmk.assign(Type=bench_name, Valeur=bmk["Close"] / bmk["Close"].iloc[0] * base_val)
+        bmk = bmk.assign(Type=benchmark_label, Valeur=bmk["Close"] / bmk["Close"].iloc[0] * base_val)
 
+        # Fusion
         full = pd.concat([agg, tot, bmk])
-        base = full.groupby("Type").apply(lambda g: g.assign(Pct=(g["Valeur"]/g["Valeur"].iloc[0]-1)*100)).reset_index(drop=True)
+        base = full.groupby("Type").apply(
+            lambda g: g.assign(Pct=(g["Valeur"]/g["Valeur"].iloc[0]-1)*100)
+        ).reset_index(drop=True)
 
-        try:
-            perf_port = base[base["Type"]=="Total"]["Pct"].iloc[-1]
-            perf_bmk  = base[base["Type"]==bench_name]["Pct"].iloc[-1]
-            diff = perf_port - perf_bmk
-            msg = (
-                f"✅ Votre portefeuille **surperforme** le {bench_name} de {diff:+.2f}%."
-                if diff > 0 else
-                f"⚠️ Votre portefeuille **sous-performe** le {bench_name} de {abs(diff):.2f}%."
-            )
-            st.markdown(f"**{msg}**")
-        except:
-            pass
+        # Comparaison % de performance
+        def perf_of(t):
+            try:
+                return base[base["Type"]==t]["Pct"].iloc[-1]
+            except:
+                return np.nan
 
+        perf_total = perf_of("Total")
+        perf_pea   = perf_of("PEA")
+        perf_cto   = perf_of("CTO")
+        perf_bmk   = perf_of(benchmark_label)
+
+        # --- Messages d'analyse
+        def compare_msg(name, perf):
+            if np.isnan(perf) or np.isnan(perf_bmk): 
+                return ""
+            diff = perf - perf_bmk
+            if diff > 0:
+                return f"✅ **{name} surperforme** {benchmark_label} de **{diff:+.2f}%**."
+            else:
+                return f"⚠️ **{name} sous-performe** {benchmark_label} de **{abs(diff):.2f}%**."
+
+        st.markdown(compare_msg("Portefeuille TOTAL", perf_total))
+        st.markdown(compare_msg("PEA", perf_pea))
+        st.markdown(compare_msg("CTO", perf_cto))
+
+        # --- ✅ Signal automatique prise de bénéfices / risque
+        st.markdown("### 💡 Signaux IA de sortie (surveillance)")
+
+        sell_signals = []
+        for _, row in out.iterrows():
+            px = row["Cours (€)"]
+            target = row["Objectif (€)"]
+            stop = row["Stop (€)"]
+            perf = row["Perf%"]
+            trend = row["Tendance LT"]
+
+            if not np.isfinite(px) or not np.isfinite(target): 
+                continue
+
+            # Conditions de signaux intelligents de vente
+            if px >= target:
+                sell_signals.append(("🎯 Objectif atteint", row["Nom"], row["Ticker"]))
+            elif perf > 12 and trend != "🌱":
+                sell_signals.append(("⚖️ Momentum s'affaiblit après +12%", row["Nom"], row["Ticker"]))
+            elif np.isfinite(stop) and px <= stop:
+                sell_signals.append(("🚨 Stop-loss déclenché", row["Nom"], row["Ticker"]))
+
+        if sell_signals:
+            for sig, name, tkr in sell_signals:
+                st.warning(f"{sig} → **{name} ({tkr})**")
+        else:
+            st.success("✅ Aucun signal de vente important pour l’instant.")
+
+        # --- Graphique
         chart = alt.Chart(base).mark_line().encode(
             x="Date:T",
             y=alt.Y("Pct:Q", title="Variation (%)"),
-            color=alt.Color("Type:N"),
+            color=alt.Color("Type:N", title=""),
             tooltip=["Date:T","Type:N","Pct:Q"]
         ).properties(height=400)
-
         st.altair_chart(chart, use_container_width=True)
+
 
 # --- 🥧 Répartition portefeuille
 st.subheader("📊 Répartition du portefeuille")
