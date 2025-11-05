@@ -116,7 +116,7 @@ for _, r in merged.iterrows():
     px = float(r.get("Close", np.nan))
     qty = r["Qty"]; pru = r["PRU"]
     name = r["Name"] or company_name_from_ticker(r["Ticker"])
-    
+
     levels = price_levels_from_row(r, profil)
     dec = decision_label_from_row(r, held=True, vol_max=volmax)
 
@@ -124,23 +124,30 @@ for _, r in merged.iterrows():
     gain = (px - pru) * qty if np.isfinite(px) and np.isfinite(pru) else np.nan
     perf = ((px/pru)-1)*100 if np.isfinite(px) and pru>0 else np.nan
 
-    prox = ((px/levels["entry"])-1)*100 if np.isfinite(px) and np.isfinite(levels["entry"]) else np.nan
+    prox = ((px / levels["entry"])-1)*100 if np.isfinite(px) and np.isfinite(levels["entry"]) else np.nan
     emoji = "🟢" if abs(prox)<=2 else ("⚠️" if abs(prox)<=5 else "🔴")
 
-    # 🧠 Nouvel indicateur Vente
-    if pd.isna(perf):
-        conseil = "—"
-    elif perf > 8:
-        conseil = "💰 Vendre partiellement"
-    elif perf < -8:
-        conseil = "🛑 Réduire / Réévaluer"
+    # Tendance LT pour jugement momentum
+    ma120 = float(r.get("MA120", np.nan))
+    ma240 = float(r.get("MA240", np.nan))
+    trend_icon = "🌱" if ma120 > ma240 else ("🌧" if ma120 < ma240 else "⚖️")
+
+    # 🎯 Priorité d'action
+    if np.isfinite(px) and np.isfinite(levels["target"]) and px >= levels["target"]:
+        priority = "🎯 Vendre"
+    elif np.isfinite(perf) and perf > 12 and trend_icon != "🌱":
+        priority = "⚖️ Alléger"
+    elif np.isfinite(px) and np.isfinite(levels["stop"]) and px <= levels["stop"]:
+        priority = "🚨 Couper"
     else:
-        conseil = "⏳ Continuer"
+        priority = "✅ Conserver"
 
     rows.append({
         "Nom": name,
         "Ticker": r["Ticker"],
         "Type": r["Type"],
+        "Décision IA": dec,
+        "🎯 Priorité": priority,
         "Cours (€)": round(px,2) if np.isfinite(px) else None,
         "Qté": qty,
         "PRU (€)": round(pru,2) if np.isfinite(pru) else None,
@@ -150,20 +157,25 @@ for _, r in merged.iterrows():
         "Entrée (€)": levels["entry"],
         "Objectif (€)": levels["target"],
         "Stop (€)": levels["stop"],
-        "Décision IA": dec,
         "Proximité (%)": round(prox,2) if np.isfinite(prox) else None,
-        "Signal Entrée": emoji,
-        "Signal Vente 💰": conseil
+        "Signal Entrée": emoji
     })
 
 out = pd.DataFrame(rows)
 
+
 # --- Styles SÉCURISÉS (plus jamais d'erreur applymap)
 def sty_dec(v):
     if "Acheter" in str(v): return "background-color:rgba(0,180,0,0.18);font-weight:600;"
-    if "Vendre" in str(v): return "background-color:rgba(255,0,0,0.18);font-weight:600;"
+    if "Vendre"  in str(v): return "background-color:rgba(255,0,0,0.18);font-weight:600;"
     if "Surveiller" in str(v): return "background-color:rgba(0,90,255,0.18);font-weight:600;"
     return ""
+
+def sty_priority(v):
+    if "Vendre" in str(v): return "background-color:#ffebee;color:#b71c1c;font-weight:600;"
+    if "Alléger" in str(v): return "background-color:#fff8e1;color:#a67c00;font-weight:600;"
+    if "Couper" in str(v): return "background-color:#ffcccc;color:#a80000;font-weight:600;"
+    return "background-color:#e8f5e9;color:#0b8043;font-weight:600;"
 
 def sty_prox(v):
     if pd.isna(v): return ""
@@ -173,11 +185,13 @@ def sty_prox(v):
 
 styled = (
     out.style
-    .applymap(sty_dec, subset=["Décision IA"])
-    .applymap(sty_prox, subset=["Proximité (%)"])
+        .applymap(sty_dec, subset=["Décision IA"])
+        .applymap(sty_priority, subset=["🎯 Priorité"])
+        .applymap(sty_prox, subset=["Proximité (%)"])
 )
 
 st.dataframe(styled, use_container_width=True, hide_index=True)
+
 
 # --- Synthèse Performance
 def synthese_perf(df, t):
