@@ -219,9 +219,9 @@ st.markdown(f"""
 st.divider()
 
 # --- Performance vs Benchmark (Total + PEA + CTO séparés)
-st.subheader(f"📈 Portefeuille vs {benchmark_label} ({periode})")
+st.subheader(f"📈 Portefeuille vs {bench_name} ({periode})")
 
-hist_graph = fetch_prices(tickers + [benchmark_symbol], days=days_hist)
+hist_graph = fetch_prices(tickers + [bench], days=days_hist)
 if hist_graph.empty or "Date" not in hist_graph.columns:
     st.caption("Pas assez d'historique.")
 else:
@@ -240,9 +240,9 @@ else:
         tot = agg.groupby("Date")["Valeur"].sum().reset_index().assign(Type="Total")  # TOTAL
 
         # Benchmark aligné
-        bmk = hist_graph[hist_graph["Ticker"] == benchmark_symbol].copy()
+        bmk = hist_graph[hist_graph["Ticker"] == bench].copy()
         base_val = float(tot["Valeur"].iloc[0]) if not tot.empty else 1.0
-        bmk = bmk.assign(Type=benchmark_label, Valeur=bmk["Close"] / bmk["Close"].iloc[0] * base_val)
+        bmk = bmk.assign(Type=benchmark_name, Valeur=bmk["Close"] / bmk["Close"].iloc[0] * base_val)
 
         # Fusion
         full = pd.concat([agg, tot, bmk])
@@ -260,7 +260,7 @@ else:
         perf_total = perf_of("Total")
         perf_pea   = perf_of("PEA")
         perf_cto   = perf_of("CTO")
-        perf_bmk   = perf_of(benchmark_label)
+        perf_bmk   = perf_of(bench_name)
 
         # --- Messages d'analyse
         def compare_msg(name, perf):
@@ -268,9 +268,9 @@ else:
                 return ""
             diff = perf - perf_bmk
             if diff > 0:
-                return f"✅ **{name} surperforme** {benchmark_label} de **{diff:+.2f}%**."
+                return f"✅ **{name} surperforme** {bench_name} de **{diff:+.2f}%**."
             else:
-                return f"⚠️ **{name} sous-performe** {benchmark_label} de **{abs(diff):.2f}%**."
+                return f"⚠️ **{name} sous-performe** {bench_name} de **{abs(diff):.2f}%**."
 
         st.markdown(compare_msg("Portefeuille TOTAL", perf_total))
         st.markdown(compare_msg("PEA", perf_pea))
