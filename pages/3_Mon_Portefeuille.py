@@ -217,13 +217,4 @@ else:
                 f"⚠️ Votre portefeuille sous-performe le {benchmark_label} de {abs(diff):.2f}%."
             )
             st.markdown(f"**{msg}**")
-        except Exception:
-            pass
 
-        chart = alt.Chart(base).mark_line().encode(
-            x="Date:T",
-            y=alt.Y("Pct:Q", title="Variation (%)"),
-            color=alt.Color("Type:N", scale=alt.Scale(scheme="category10")),
-            tooltip=["Date:T","Type:N","Pct:Q"]
-        ).properties(height=400)
-        st.altair_chart(chart, use_container_width=True)
