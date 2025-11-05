@@ -179,3 +179,92 @@ styled = (
 
 st.dataframe(styled, use_container_width=True, hide_index=True)
 
+# --- Synthèse Performance
+def synthese_perf(df, t):
+    df = df[df["Type"] == t]
+    if df.empty:
+        return 0, 0
+    val = df["Valeur (€)"].sum()
+    gain = df["Gain (€)"].sum()
+    pct = (gain / (val - gain) * 100) if val - gain != 0 else 0
+    return gain, pct
+
+pea_gain, pea_pct = synthese_perf(out, "PEA")
+cto_gain, cto_pct = synthese_perf(out, "CTO")
+tot_gain = out["Gain (€)"].sum()
+tot_val  = out["Valeur (€)"].sum()
+tot_pct  = (tot_gain / (tot_val - tot_gain) * 100) if tot_val != 0 else 0
+
+st.markdown(f"""
+### 📊 Synthèse de performance ({periode})
+**PEA** : {pea_gain:+.2f} € ({pea_pct:+.2f}%)  
+**CTO** : {cto_gain:+.2f} € ({cto_pct:+.2f}%)  
+**Total** : {tot_gain:+.2f} € ({tot_pct:+.2f}%)  
+""")
+
+st.divider()
+
+# --- 🥧 Répartition portefeuille
+st.subheader("📊 Répartition du portefeuille")
+repart = out.groupby("Nom").agg({"Valeur (€)":"sum"}).reset_index()
+if not repart.empty:
+    chart = alt.Chart(repart).mark_arc(outerRadius=120).encode(
+        theta="Valeur (€):Q",
+        color=alt.Color("Nom:N", legend=None),
+        tooltip=["Nom:N", "Valeur (€):Q"]
+    )
+    st.altair_chart(chart, use_container_width=True)
+else:
+    st.caption("Aucune donnée pour le camembert.")
+
+st.divider()
+
+# --- Performance vs Benchmark
+st.subheader(f"📈 Portefeuille vs {bench_name} ({periode})")
+
+hist_graph = fetch_prices(tickers + [bench], days=days)
+if hist_graph.empty or "Date" not in hist_graph.columns:
+    st.caption("Pas assez d'historique.")
+else:
+    df_val = []
+    for _, r in edited.iterrows():
+        tkr, qt, _, tp = r["Ticker"], r["Qty"], r["PRU"], r["Type"]
+        d = hist_graph[hist_graph["Ticker"] == tkr].copy()
+        if d.empty: continue
+        d["Valeur"] = d["Close"] * qt
+        d["Type"] = tp
+        df_val.append(d[["Date","Valeur","Type"]])
+
+    if df_val:
+        D = pd.concat(df_val)
+        agg = D.groupby(["Date","Type"]).agg({"Valeur":"sum"}).reset_index()
+        tot = agg.groupby("Date")["Valeur"].sum().reset_index().assign(Type="Total")
+
+        bmk = hist_graph[hist_graph["Ticker"] == bench].copy()
+        base_val = float(tot["Valeur"].iloc[0]) if not tot.empty else 1.0
+        bmk = bmk.assign(Type=bench_name, Valeur=bmk["Close"] / bmk["Close"].iloc[0] * base_val)
+
+        full = pd.concat([agg, tot, bmk])
+        base = full.groupby("Type").apply(lambda g: g.assign(Pct=(g["Valeur"]/g["Valeur"].iloc[0]-1)*100)).reset_index(drop=True)
+
+        try:
+            perf_port = base[base["Type"]=="Total"]["Pct"].iloc[-1]
+            perf_bmk  = base[base["Type"]==bench_name]["Pct"].iloc[-1]
+            diff = perf_port - perf_bmk
+            msg = (
+                f"✅ Votre portefeuille **surperforme** le {bench_name} de {diff:+.2f}%."
+                if diff > 0 else
+                f"⚠️ Votre portefeuille **sous-performe** le {bench_name} de {abs(diff):.2f}%."
+            )
+            st.markdown(f"**{msg}**")
+        except:
+            pass
+
+        chart = alt.Chart(base).mark_line().encode(
+            x="Date:T",
+            y=alt.Y("Pct:Q", title="Variation (%)"),
+            color=alt.Color("Type:N"),
+            tooltip=["Date:T","Type:N","Pct:Q"]
+        ).properties(height=400)
+
+        st.altair_chart(chart, use_container_width=True)
