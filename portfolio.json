@@ -1,0 +1,163 @@
+[
+  {
+    "Ticker": "SAN.PA",
+    "Type": "PEA",
+    "Qty": 1.0,
+    "PRU": 80.08,
+    "Name": "SANOFI"
+  },
+  {
+    "Ticker": "TTE.PA",
+    "Type": "PEA",
+    "Qty": 1.0,
+    "PRU": 52.83,
+    "Name": "TOTALENERGIES"
+  },
+  {
+    "Ticker": "EDEN.PA",
+    "Type": "PEA",
+    "Qty": 2.0,
+    "PRU": 25.66,
+    "Name": "EDENRED"
+  },
+  {
+    "Ticker": "PRP.F",
+    "Type": "PEA",
+    "Qty": 5.0,
+    "PRU": 4.86,
+    "Name": "Prada S.p.A.                  A"
+  },
+  {
+    "Ticker": "DFNS.MI",
+    "Type": "CTO",
+    "Qty": 1.3837329999999999,
+    "PRU": 51.4,
+    "Name": "DEFENCE USD "
+  },
+  {
+    "Ticker": "EUDF.DE",
+    "Type": "CTO",
+    "Qty": 2.0,
+    "PRU": 33.91,
+    "Name": "EUROPE DEFENCE"
+  },
+  {
+    "Ticker": "GUI.F",
+    "Type": "CTO",
+    "Qty": 3.0,
+    "PRU": 21.0,
+    "Name": "DIAGEO GUINNESS"
+  },
+  {
+    "Ticker": "NATO.MI",
+    "Type": "CTO",
+    "Qty": 6.070383,
+    "PRU": 16.64,
+    "Name": "Future of Defence UCITS ETF"
+  },
+  {
+    "Ticker": "EDEN.PA",
+    "Type": "CTO",
+    "Qty": 1.5372789999999998,
+    "PRU": 26.02,
+    "Name": "EDENRED"
+  },
+  {
+    "Ticker": "MWRD.MI",
+    "Type": "CTO",
+    "Qty": 0.8649749999999999,
+    "PRU": 138.59,
+    "Name": "MSCI World "
+  },
+  {
+    "Ticker": "TKMS.DE",
+    "Type": "CTO",
+    "Qty": 0.37133299999999997,
+    "PRU": 80.9,
+    "Name": "TKMS AG & Co. KGaA            I"
+  },
+  {
+    "Ticker": "DJ5.F",
+    "Type": "CTO",
+    "Qty": 95.846645,
+    "PRU": 0.313,
+    "Name": "Surge Battery Metals Inc.     R"
+  },
+  {
+    "Ticker": "PINR.PA",
+    "Type": "CTO",
+    "Qty": 1.017687,
+    "PRU": 24.57,
+    "Name": "MSCI India"
+  },
+  {
+    "Ticker": "MC.PA",
+    "Type": "CTO",
+    "Qty": 0.038624,
+    "PRU": 517.29,
+    "Name": "LVMH"
+  },
+  {
+    "Ticker": "APC.DE",
+    "Type": "CTO",
+    "Qty": 0.100836,
+    "PRU": 198.34,
+    "Name": "Apple Inc.                    R"
+  },
+  {
+    "Ticker": "L0CK.DE",
+    "Type": "CTO",
+    "Qty": 3.408267,
+    "PRU": 8.8,
+    "Name": "Digital Security UC.ETFR"
+  },
+  {
+    "Ticker": "EGLN.L",
+    "Type": "CTO",
+    "Qty": 0.415524,
+    "PRU": 63.41,
+    "Name": "PHYSICAL GOLD"
+  },
+  {
+    "Ticker": "DN3.F",
+    "Type": "CTO",
+    "Qty": 6.792452,
+    "PRU": 2.65,
+    "Name": "Metaplanet Inc.               R"
+  },
+  {
+    "Ticker": "TKE.DE",
+    "Type": "CTO",
+    "Qty": 0.081741,
+    "PRU": 207.97,
+    "Name": "TAKE-TWO INTERACTIVE SOFTW.INCR"
+  },
+  {
+    "Ticker": "SON1.F",
+    "Type": "CTO",
+    "Qty": 2.537186,
+    "PRU": 24.17,
+    "Name": "Sony Group Corp.              R"
+  },
+  {
+    "Ticker": "8BZ.F",
+    "Type": "CTO",
+    "Qty": 0.08620599999999999,
+    "PRU": 20.18,
+    "Name": "Sony Financial Group Inc.     R"
+  },
+  {
+    "Ticker": "MT.AS",
+    "Type": "CTO",
+    "Qty": 1.203369,
+    "PRU": 33.24,
+    "Name": "ARCELORMITTAL SA"
+  },
+  {
+    "Ticker": "NVD.DE",
+    "Type": "CTO",
+    "Qty": 0.277346,
+    "PRU": 183.89,
+    "Name": "NVD.DE"
+  }
+]
