@@ -204,21 +204,6 @@ st.markdown(f"""
 
 st.divider()
 
-# --- 🥧 Répartition portefeuille
-st.subheader("📊 Répartition du portefeuille")
-repart = out.groupby("Nom").agg({"Valeur (€)":"sum"}).reset_index()
-if not repart.empty:
-    chart = alt.Chart(repart).mark_arc(outerRadius=120).encode(
-        theta="Valeur (€):Q",
-        color=alt.Color("Nom:N", legend=None),
-        tooltip=["Nom:N", "Valeur (€):Q"]
-    )
-    st.altair_chart(chart, use_container_width=True)
-else:
-    st.caption("Aucune donnée pour le camembert.")
-
-st.divider()
-
 # --- Performance vs Benchmark
 st.subheader(f"📈 Portefeuille vs {bench_name} ({periode})")
 
@@ -268,3 +253,18 @@ else:
         ).properties(height=400)
 
         st.altair_chart(chart, use_container_width=True)
+
+# --- 🥧 Répartition portefeuille
+st.subheader("📊 Répartition du portefeuille")
+repart = out.groupby("Nom").agg({"Valeur (€)":"sum"}).reset_index()
+if not repart.empty:
+    chart = alt.Chart(repart).mark_arc(outerRadius=120).encode(
+        theta="Valeur (€):Q",
+        color=alt.Color("Nom:N", legend=None),
+        tooltip=["Nom:N", "Valeur (€):Q"]
+    )
+    st.altair_chart(chart, use_container_width=True)
+else:
+    st.caption("Aucune donnée pour le camembert.")
+
+st.divider()
